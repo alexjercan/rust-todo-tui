@@ -37,7 +37,7 @@ where
         }
 
         if m < n {
-            write!(f, "*{}*\n", self.items[m])?;
+            write!(f, "{}<<<\n", self.items[m])?;
         }
 
         for i in m+1..n {
@@ -76,17 +76,27 @@ impl<T> StatefulList<T> {
 
 struct Item<'a> {
     text: &'a str,
+    completed: bool,
 }
 
 impl<'a> Display for Item<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        return write!(f, "{}", self.text);
+        let status = if self.completed { "[X]" } else { "[ ]" };
+        return write!(f, "{} {}", status, self.text);
     }
 }
 
 impl<'a> Item<'a> {
     fn new(text: &'a str) -> Self {
-        return Item { text };
+        return Item { text, completed: false };
+    }
+
+    fn toggle(&mut self) {
+        self.completed = !self.completed;
+    }
+
+    fn set(&mut self, value: bool) {
+        self.completed = value;
     }
 }
 
@@ -103,9 +113,15 @@ impl<'a> Default for App<'a> {
 fn main() -> Result<(), io::Error> {
     let mut app = App::default();
 
-    app.items.push(Item::new("item1"));
-    app.items.push(Item::new("item2"));
-    app.items.push(Item::new("item3"));
+    app.items.push(Item::new("Use TUI to display items"));
+    app.items.push(Item::new("Read and write lines to a file"));
+    app.items.push(Item::new("Make the file be date based by default current date"));
+    app.items.push(Item::new("be able to move trough tasks using j and k"));
+    app.items.push(Item::new("The selected item should be colored or something"));
+    app.items.push(Item::new("be able to insert a task at current position using i"));
+    app.items.push(Item::new("be able to append a task at the end using a"));
+    app.items.push(Item::new("be able to toggle a task using x"));
+    app.items.push(Item::new("maybe I will have default tasks in a .config file"));
 
     println!("{}", app.items);
 
