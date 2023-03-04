@@ -1,15 +1,19 @@
-use std::{
-    fmt::Display,
-    fs, io,
-    slice::Iter,
-    str::FromStr,
-    time::{Duration, Instant},
-};
-
+use chrono::{self, Days, NaiveDate};
+use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use std::{
+    env,
+    fmt::Display,
+    fs::{self, OpenOptions},
+    io::{self, Read},
+    path::Path,
+    slice::Iter,
+    str::FromStr,
+    time::{Duration, Instant},
 };
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -71,6 +75,10 @@ impl<T> StatefulList<T> {
     }
 
     fn next(&mut self) {
+        if self.items.len() == 0 {
+            return;
+        }
+
         let i = match self.state.selected() {
             Some(i) => (i + 1) % self.items.len(),
             None => 0,
@@ -79,6 +87,10 @@ impl<T> StatefulList<T> {
     }
 
     fn prev(&mut self) {
+        if self.items.len() == 0 {
+            return;
+        }
+
         let i = match self.state.selected() {
             Some(i) => (i + self.items.len() - 1) % self.items.len(),
             None => 0,
@@ -179,51 +191,27 @@ impl FromStr for App {
 }
 
 impl App {
-    fn debug() -> Self {
-        let mut app = App::default();
-
-        let mut item = Item::new("Use TUI to display items and exit on q");
-        item.toggle();
-        app.items.push(item);
-
-        app.items.push(Item::new("Read and write lines to a file"));
-        app.items.push(Item::new(
-            "Make the file be date based by default current date",
-        ));
-
-        let mut item = Item::new("be able to move trough tasks using j and k");
-        item.toggle();
-        app.items.push(item);
-
-        let mut item = Item::new("The selected item should be colored or something");
-        item.toggle();
-        app.items.push(item);
-
-        app.items.push(Item::new(
-            "be able to insert a task at current position using i",
-        ));
-        app.items
-            .push(Item::new("be able to append a task at the end using a"));
-
-        let mut item = Item::new("be able to toggle a task using x");
-        item.toggle();
-        app.items.push(item);
-
-        app.items.push(Item::new(
-            "maybe I will have default tasks in a .config file",
-        ));
-
-        return app;
-    }
-
-    fn save(&self, path: &str) -> Result<(), Error> {
+    fn save<P>(&self, path: P) -> Result<(), Error>
+    where
+        P: AsRef<Path>,
+    {
         fs::write(path, self.to_string())?;
 
         return Ok(());
     }
 
-    fn load(path: &str) -> Result<Self, Error> {
-        let data = fs::read_to_string(path)?;
+    fn load<P>(path: P) -> Result<Self, Error>
+    where
+        P: AsRef<Path>,
+    {
+        let mut data = String::new();
+
+        let _ = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)?
+            .read_to_string(&mut data)?;
 
         return data.parse();
     }
@@ -288,8 +276,45 @@ impl App {
     }
 }
 
+/// Simple TUI TODO Application for daily tasks.
+#[derive(Parser, Debug)]
+#[command(version)]
+struct Args {
+    /// Name of the todo file to use
+    #[arg(short, long)]
+    name: Option<String>,
+
+    /// Creates a todo list for tomorrow
+    #[arg(short, long)]
+    tomorrow: bool,
+}
+
 fn main() -> Result<(), Error> {
-    let mut app = App::debug();
+    let xdg_config_home =
+        env::var("XDG_CONFIG_HOME").unwrap_or(env::var("HOME").unwrap_or(".".to_string()));
+    let todo_path = Path::new(&xdg_config_home).join("todo-tui").join("todo");
+    fs::create_dir_all(&todo_path)?;
+
+    let args = Args::parse();
+
+    let name = match args.name {
+        Some(name) => name,
+        None => {
+            let date = chrono::Utc::now().date_naive();
+
+            let date = if args.tomorrow {
+                date.checked_add_days(Days::new(1))
+                    .expect("to be able to compute next day")
+            } else {
+                date
+            };
+
+            format!("{}", date)
+        }
+    };
+    let todo_path = todo_path.join(name);
+
+    let mut app = App::load(&todo_path)?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -311,6 +336,8 @@ fn main() -> Result<(), Error> {
     if let Err(err) = res {
         println!("{:?}", err)
     }
+
+    app.save(&todo_path)?;
 
     return Ok(());
 }
