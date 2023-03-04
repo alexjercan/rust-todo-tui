@@ -1,4 +1,4 @@
-use chrono::{self, Days, NaiveDate};
+use chrono::{self, Days};
 use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -19,7 +19,8 @@ use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    text::{Span, Spans},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -255,7 +256,7 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(95), Constraint::Percentage(5)].as_ref())
             .split(f.size());
 
         let items: Vec<ListItem> = self
@@ -272,7 +273,16 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             );
 
+        let text = vec![
+            Spans::from(vec![
+                Span::raw("q:Quit  k:Up  j:Down  x:Toggle"),
+            ]),
+        ];
+        let text = Paragraph::new(text)
+            .wrap(Wrap { trim: true });
+
         f.render_stateful_widget(items, chunks[0], &mut self.items.state);
+        f.render_widget(text, chunks[1]);
     }
 }
 
