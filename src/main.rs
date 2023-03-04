@@ -33,15 +33,15 @@ where
         };
 
         for i in 0..m {
-            write!(f, "{}\n", self.items[i])?;
+            writeln!(f, "{}", self.items[i])?;
         }
 
         if m < n {
-            write!(f, "{}<<<\n", self.items[m])?;
+            writeln!(f, "{}<<<", self.items[m])?;
         }
 
         for i in m+1..n {
-            write!(f, "{}\n", self.items[i])?;
+            writeln!(f, "{}", self.items[i])?;
         }
 
         return Ok(());
