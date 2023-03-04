@@ -106,6 +106,10 @@ impl<T> StatefulList<T> {
 
         let i = self.state.selected().unwrap();
 
+        if self.items.len() - 1 == i {
+            self.prev();
+        }
+
         self.items.remove(i);
     }
 
