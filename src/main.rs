@@ -19,7 +19,7 @@ use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Span, Spans},
+    text::{Span, Spans, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
     Frame, Terminal,
 };
@@ -99,6 +99,16 @@ impl<T> StatefulList<T> {
         self.state.select(Some(i));
     }
 
+    fn remove(&mut self) {
+        if self.items.len() == 0 {
+            return;
+        }
+
+        let i = self.state.selected().unwrap();
+
+        self.items.remove(i);
+    }
+
     fn selected_mut(&mut self) -> Option<&mut T> {
         let i = self.state.selected()?;
 
@@ -144,9 +154,9 @@ impl FromStr for Item {
 }
 
 impl Item {
-    fn new(text: &str) -> Self {
+    fn new(text: String) -> Self {
         return Item {
-            text: text.to_string(),
+            text,
             completed: false,
         };
     }
@@ -156,14 +166,30 @@ impl Item {
     }
 }
 
+enum InputMode {
+    Normal,
+    Editing,
+}
+
+impl Default for InputMode {
+    fn default() -> Self {
+        return InputMode::Normal;
+    }
+}
+
 struct App {
     items: StatefulList<Item>,
+
+    input: String,
+    input_mode: InputMode,
 }
 
 impl Default for App {
     fn default() -> Self {
         return App {
             items: StatefulList::default(),
+            input: String::default(),
+            input_mode: InputMode::default(),
         };
     }
 }
@@ -187,11 +213,17 @@ impl FromStr for App {
             .map(|line| line.parse::<Item>())
             .collect::<Result<_, _>>()?;
 
-        return Ok(App { items });
+        return Ok(App::with_items(items));
     }
 }
 
 impl App {
+    fn with_items(items: StatefulList<Item>) -> Self {
+        let mut app = App::default();
+        app.items = items;
+        return app;
+    }
+
     fn save<P>(&self, path: P) -> Result<(), Error>
     where
         P: AsRef<Path>,
@@ -233,15 +265,39 @@ impl App {
                 .unwrap_or_else(|| Duration::from_secs(0));
             if crossterm::event::poll(timeout)? {
                 if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('j') => self.items.next(),
-                        KeyCode::Char('k') => self.items.prev(),
-                        KeyCode::Char('x') => match self.items.selected_mut() {
-                            Some(item) => item.toggle(),
-                            None => {}
+                    match self.input_mode {
+                        InputMode::Normal => match key.code {
+                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Char('j') => self.items.next(),
+                            KeyCode::Char('k') => self.items.prev(),
+                            KeyCode::Char('x') => match self.items.selected_mut() {
+                                Some(item) => item.toggle(),
+                                None => {}
+                            },
+                            KeyCode::Char('a') => {
+                                self.input_mode = InputMode::Editing;
+                            }
+                            KeyCode::Char('d') => {
+                                self.items.remove();
+                            }
+                            _ => {}
                         },
-                        _ => {}
+                        InputMode::Editing => match key.code {
+                            KeyCode::Enter => {
+                                self.items.push(Item::new(self.input.drain(..).collect()));
+                                self.input_mode = InputMode::Normal;
+                            }
+                            KeyCode::Char(c) => {
+                                self.input.push(c);
+                            }
+                            KeyCode::Backspace => {
+                                self.input.pop();
+                            }
+                            KeyCode::Esc => {
+                                self.input_mode = InputMode::Normal;
+                            }
+                            _ => {}
+                        },
                     }
                 }
             }
@@ -256,7 +312,14 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([Constraint::Percentage(95), Constraint::Percentage(5)].as_ref())
+            .constraints(
+                [
+                    Constraint::Percentage(90),
+                    Constraint::Percentage(5),
+                    Constraint::Min(1),
+                ]
+                .as_ref(),
+            )
             .split(f.size());
 
         let items: Vec<ListItem> = self
@@ -273,16 +336,51 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             );
 
-        let text = vec![
-            Spans::from(vec![
-                Span::raw("q:Quit  k:Up  j:Down  x:Toggle"),
-            ]),
-        ];
-        let text = Paragraph::new(text)
-            .wrap(Wrap { trim: true });
+        let (msg, style) = match self.input_mode {
+            InputMode::Normal => (
+                vec![
+                    Span::raw("Press "),
+                    Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to exit, "),
+                    Span::styled("k", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to move up, "),
+                    Span::styled("j", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to move down, "),
+                    Span::styled("x", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to toggle, "),
+                    Span::styled("a", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to add new todo,"),
+                    Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to remove."),
+                ],
+                Style::default().add_modifier(Modifier::RAPID_BLINK),
+            ),
+            _ => (
+                vec![
+                    Span::raw("Press "),
+                    Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to stop editing, "),
+                    Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" to write the todo."),
+                ],
+                Style::default(),
+            ),
+        };
+        let mut text = Text::from(Spans::from(msg));
+        text.patch_style(style);
+        let help_message = Paragraph::new(text).wrap(Wrap { trim: true });
 
         f.render_stateful_widget(items, chunks[0], &mut self.items.state);
-        f.render_widget(text, chunks[1]);
+        f.render_widget(help_message, chunks[1]);
+
+        match self.input_mode {
+            InputMode::Normal => {}
+            _ => {
+                let input = Paragraph::new(self.input.as_ref());
+                f.render_widget(input, chunks[2]);
+                f.set_cursor(chunks[2].x + self.input.len() as u16, chunks[2].y);
+            }
+        }
     }
 }
 
