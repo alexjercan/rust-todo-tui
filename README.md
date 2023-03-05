@@ -1,18 +1,60 @@
+<div align="center">
+
 # TODO TUI
 
-Simple TUI TODO Application for daily tasks.
+#### Simple TUI TODO Application for daily tasks.
 
-## QuickStart
+</div>
+
+![todo](https://i.imgur.com/RBMU8Pi.png)
+
+## ⇁ QuickStart
 
 ```console
 cargo run
 ```
 
-## Config
+## ⇁ Installation
+* cargo 1.66.0-nightly
+
+Build the cargo project:
+
+```console
+cargo build --reslease
+cp ~/Documents/todo-tui/target/release/todo-tui ~/.local/bin/todo-tui
+```
+
+Open a new terminal and check it the tool is working (also make sure that
+~/.local/bin/ is on the `PATH`)
+
+```console
+todo-tui --version
+```
+
+## ⇁ Config
 
 The tool creates a folder `todo-tui/todo` in `XDG_CONFIG_HOME`. This is usually in
 the home folder in `.config`. When creating new todo lists all the todos are
 saved as lists in the `todo` folder.
+
+At this point you can either use the binary or cargo to run the project. If you
+choose cargo you need to use: `cargo run --` and after the `--` you can add the
+arguments for the program. And if you use the binary just use `todo-tui` and
+then you can simply just add the flags.
+
+For example:
+
+```console
+cargo run -- --help
+```
+
+and
+
+```console
+todo-tui --help
+```
+
+should give the same results.
 
 ### Default Name
 
