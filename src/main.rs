@@ -327,8 +327,8 @@ impl App {
             .margin(1)
             .constraints(
                 [
-                    Constraint::Percentage(90),
-                    Constraint::Percentage(5),
+                    Constraint::Percentage(85),
+                    Constraint::Percentage(10),
                     Constraint::Min(1),
                 ]
                 .as_ref(),
@@ -362,7 +362,7 @@ impl App {
                     Span::styled("x", Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw(" to toggle, "),
                     Span::styled("a", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to add new todo,"),
+                    Span::raw(" to add new todo, "),
                     Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw(" to remove."),
                 ],
