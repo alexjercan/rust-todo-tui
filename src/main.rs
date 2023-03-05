@@ -50,6 +50,15 @@ impl<T> Default for StatefulList<T> {
     }
 }
 
+impl<T> IntoIterator for StatefulList<T> {
+    type Item = T;
+    type IntoIter = <Vec<T> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        return self.items.into_iter();
+    }
+}
+
 impl<T> FromIterator<T> for StatefulList<T> {
     fn from_iter<V: IntoIterator<Item = T>>(iter: V) -> Self {
         let mut items = StatefulList::default();
@@ -396,6 +405,10 @@ struct Args {
     #[arg(short, long)]
     name: Option<String>,
 
+    /// Import a list of todos from a file as a template
+    #[arg(short, long)]
+    import: Option<String>,
+
     /// Creates a todo list for tomorrow
     #[arg(short, long)]
     tomorrow: bool,
@@ -424,9 +437,16 @@ fn main() -> Result<(), Error> {
             format!("{}", date)
         }
     };
-    let todo_path = todo_path.join(name);
+    let app_path = todo_path.join(name);
+    let mut app = App::load(&app_path)?;
 
-    let mut app = App::load(&todo_path)?;
+    if let Some(import) = args.import {
+        let import_path = todo_path.join(import);
+        let import = App::load(&import_path)?;
+        for item in import.items.into_iter() {
+            app.items.push(item);
+        }
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -449,7 +469,7 @@ fn main() -> Result<(), Error> {
         println!("{:?}", err)
     }
 
-    app.save(&todo_path)?;
+    app.save(&app_path)?;
 
     return Ok(());
 }
