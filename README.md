@@ -4,9 +4,9 @@
 
 #### Simple TUI TODO Application for daily tasks.
 
-</div>
-
 ![todo](https://i.imgur.com/RBMU8Pi.png)
+
+</div>
 
 ## ⇁ QuickStart
 
