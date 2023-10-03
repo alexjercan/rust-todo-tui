@@ -1,144 +1,32 @@
-use chrono::{self, Days};
+mod args;
+mod config;
+
+use anyhow::{bail, Error, Result};
+use chrono::Days;
 use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-    execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
 };
+use ratatui::{prelude::*, widgets::*};
 use std::{
-    env,
-    fmt::Display,
     fs::{self, OpenOptions},
-    io::{self, Read},
+    io::{stdout, Read},
     path::Path,
-    slice::Iter,
     str::FromStr,
-    time::{Duration, Instant},
-};
-use tui::{
-    backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
-    Frame, Terminal,
 };
 
-#[derive(Debug)]
-enum Error {
-    ParseError,
-    IOError(io::Error),
-}
-
-impl From<io::Error> for Error {
-    fn from(value: io::Error) -> Self {
-        return Self::IOError(value);
-    }
-}
-
-struct StatefulList<T> {
-    state: ListState,
-    items: Vec<T>,
-}
-
-impl<T> Default for StatefulList<T> {
-    fn default() -> Self {
-        return StatefulList {
-            state: ListState::default(),
-            items: Vec::default(),
-        };
-    }
-}
-
-impl<T> IntoIterator for StatefulList<T> {
-    type Item = T;
-    type IntoIter = <Vec<T> as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        return self.items.into_iter();
-    }
-}
-
-impl<T> FromIterator<T> for StatefulList<T> {
-    fn from_iter<V: IntoIterator<Item = T>>(iter: V) -> Self {
-        let mut items = StatefulList::default();
-
-        for item in iter {
-            items.push(item);
-        }
-
-        return items;
-    }
-}
-
-impl<T> StatefulList<T> {
-    fn push(&mut self, item: T) {
-        if self.items.len() == 0 {
-            self.state.select(Some(0));
-        }
-
-        self.items.push(item);
-    }
-
-    fn iter(&self) -> Iter<'_, T> {
-        return self.items.iter();
-    }
-
-    fn next(&mut self) {
-        if self.items.len() == 0 {
-            return;
-        }
-
-        let i = match self.state.selected() {
-            Some(i) => (i + 1) % self.items.len(),
-            None => 0,
-        };
-        self.state.select(Some(i));
-    }
-
-    fn prev(&mut self) {
-        if self.items.len() == 0 {
-            return;
-        }
-
-        let i = match self.state.selected() {
-            Some(i) => (i + self.items.len() - 1) % self.items.len(),
-            None => 0,
-        };
-        self.state.select(Some(i));
-    }
-
-    fn remove(&mut self) {
-        if self.items.len() == 0 {
-            return;
-        }
-
-        let i = self.state.selected().unwrap();
-
-        if self.items.len() - 1 == i {
-            self.prev();
-        }
-
-        self.items.remove(i);
-    }
-
-    fn selected_mut(&mut self) -> Option<&mut T> {
-        let i = self.state.selected()?;
-
-        return Some(&mut self.items[i]);
-    }
-}
-
-#[derive(Debug)]
-struct Item {
+#[derive(Debug, Default)]
+pub struct Item {
     text: String,
     completed: bool,
 }
 
-impl Display for Item {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let status = if self.completed { "[X]" } else { "[ ]" };
-        return write!(f, "{} {}", status, self.text);
+impl ToString for Item {
+    fn to_string(&self) -> String {
+        let status = if self.completed { "- [x]" } else { "- [ ]" };
+        return format!("{} {}", status, self.text);
     }
 }
 
@@ -146,42 +34,48 @@ impl FromStr for Item {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let text = &s[4..];
+        if !s.starts_with("- [ ]") && !s.starts_with("- [x]") {
+            bail!("Invalid item format");
+        }
 
-        match &s[..3] {
-            "[ ]" => {
+        // HACK: This is a hack to parse todo items from a string.
+        let text = &s[6..];
+
+        match &s[..5] {
+            "- [ ]" => {
                 return Ok(Item {
                     text: text.to_string(),
                     completed: false,
                 })
             }
-            "[X]" => {
+            "- [x]" => {
                 return Ok(Item {
                     text: text.to_string(),
                     completed: true,
                 })
             }
-            _ => return Err(Self::Err::ParseError),
+            _ => bail!("Invalid item format"),
         }
     }
 }
 
 impl Item {
-    fn new(text: String) -> Self {
+    pub fn new(text: String) -> Self {
         return Item {
             text,
             completed: false,
         };
     }
 
-    fn toggle(&mut self) {
+    pub fn toggle(&mut self) {
         self.completed = !self.completed;
     }
 }
 
+#[derive(Debug)]
 enum InputMode {
     Normal,
-    Editing,
+    Insert,
 }
 
 impl Default for InputMode {
@@ -190,286 +84,263 @@ impl Default for InputMode {
     }
 }
 
-struct App {
-    items: StatefulList<Item>,
-
-    input: String,
-    input_mode: InputMode,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        return App {
-            items: StatefulList::default(),
-            input: String::default(),
-            input_mode: InputMode::default(),
-        };
-    }
-}
-
-impl Display for App {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for item in self.items.iter() {
-            writeln!(f, "{}", item)?;
-        }
-
-        return Ok(());
-    }
-}
-
-impl FromStr for App {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let items = s
-            .lines()
-            .map(|line| line.parse::<Item>())
-            .collect::<Result<_, _>>()?;
-
-        return Ok(App::with_items(items));
-    }
-}
-
-impl App {
-    fn with_items(items: StatefulList<Item>) -> Self {
-        let mut app = App::default();
-        app.items = items;
-        return app;
-    }
-
-    fn save<P>(&self, path: P) -> Result<(), Error>
-    where
-        P: AsRef<Path>,
-    {
-        fs::write(path, self.to_string())?;
-
-        return Ok(());
-    }
-
-    fn load<P>(path: P) -> Result<Self, Error>
-    where
-        P: AsRef<Path>,
-    {
-        let mut data = String::new();
-
-        let _ = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&path)?
-            .read_to_string(&mut data)?;
-
-        return data.parse();
-    }
-
-    fn on_tick(&mut self) {}
-
-    fn run<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        tick_rate: Duration,
-    ) -> Result<(), Error> {
-        let mut last_tick = Instant::now();
-        loop {
-            terminal.draw(|f| self.ui(f))?;
-
-            let timeout = tick_rate
-                .checked_sub(last_tick.elapsed())
-                .unwrap_or_else(|| Duration::from_secs(0));
-            if crossterm::event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    match self.input_mode {
-                        InputMode::Normal => match key.code {
-                            KeyCode::Char('q') => return Ok(()),
-                            KeyCode::Char('j') => self.items.next(),
-                            KeyCode::Char('k') => self.items.prev(),
-                            KeyCode::Char('x') => match self.items.selected_mut() {
-                                Some(item) => item.toggle(),
-                                None => {}
-                            },
-                            KeyCode::Char('a') => {
-                                self.input_mode = InputMode::Editing;
-                            }
-                            KeyCode::Char('d') => {
-                                self.items.remove();
-                            }
-                            _ => {}
-                        },
-                        InputMode::Editing => match key.code {
-                            KeyCode::Enter => {
-                                self.items.push(Item::new(self.input.drain(..).collect()));
-                                self.input_mode = InputMode::Normal;
-                            }
-                            KeyCode::Char(c) => {
-                                self.input.push(c);
-                            }
-                            KeyCode::Backspace => {
-                                self.input.pop();
-                            }
-                            KeyCode::Esc => {
-                                self.input_mode = InputMode::Normal;
-                            }
-                            _ => {}
-                        },
-                    }
-                }
-            }
-            if last_tick.elapsed() >= tick_rate {
-                self.on_tick();
-                last_tick = Instant::now();
-            }
-        }
-    }
-
-    fn ui<B: Backend>(&mut self, f: &mut Frame<B>) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints(
-                [
-                    Constraint::Percentage(85),
-                    Constraint::Percentage(10),
-                    Constraint::Min(1),
-                ]
-                .as_ref(),
-            )
-            .split(f.size());
-
-        let items: Vec<ListItem> = self
-            .items
+pub fn write_items<P>(items: &Vec<Item>, path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    fs::write(
+        path,
+        items
             .iter()
-            .map(|i| -> ListItem { ListItem::new(i.to_string()).style(Style::default()) })
-            .collect();
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
 
-        let items = List::new(items)
-            .block(Block::default().title("TODO App").borders(Borders::ALL))
+    return Ok(());
+}
+
+pub fn read_items<P>(path: P, default_items: &Vec<String>) -> Result<Vec<Item>>
+where
+    P: AsRef<Path>,
+{
+    let mut items = Vec::new();
+
+    if !path.as_ref().exists() {
+        items.extend(default_items.iter().map(|i| Item::new(i.to_string())));
+    }
+
+    let mut data = String::new();
+
+    let _ = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&path)?
+        .read_to_string(&mut data)?;
+
+    items.extend(data.lines().filter_map(|line| line.parse::<Item>().ok()));
+
+    return Ok(items);
+}
+
+pub fn date(offset: i64, format: &str) -> String {
+    if offset >= 0 {
+        chrono::Utc::now().checked_add_days(Days::new(offset.unsigned_abs()))
+    } else {
+        chrono::Utc::now().checked_sub_days(Days::new(offset.unsigned_abs()))
+    }
+    .expect("Buy more bits")
+    .format(format)
+    .to_string()
+}
+
+fn main() -> Result<()> {
+    let args = args::Args::parse();
+    let config = match args.config {
+        Some(path) => config::Config::from_file(&path)?,
+        None => config::Config::parse()?,
+    };
+
+    fs::create_dir_all(&config.path)?;
+
+    let mut input_text = String::default();
+    let mut input_mode = InputMode::default();
+    let mut day_offset = 0;
+    let mut day_name = date(day_offset, &config.date_format);
+    let mut day_path = Path::new(&config.path).join(format!("{}.md", day_name));
+    let mut items = read_items(&day_path, &config.habits)?;
+    let mut items_state = ListState::default();
+
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    stdout().execute(EnableMouseCapture)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+
+    loop {
+        terminal.draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([Constraint::Min(10), Constraint::Max(2), Constraint::Max(1)].as_ref())
+                .split(f.size());
+
+            let items = List::new(
+                items
+                    .iter()
+                    .map(|i| -> ListItem { ListItem::new(i.to_string()).style(Style::default()) })
+                    .collect::<Vec<_>>(),
+            )
+            .block(
+                Block::default()
+                    .title(day_name.clone())
+                    .borders(Borders::ALL),
+            )
             .highlight_style(
                 Style::default()
                     .bg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD),
             );
 
-        let (msg, style) = match self.input_mode {
-            InputMode::Normal => (
-                vec![
-                    Span::raw("Press "),
-                    Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to exit, "),
-                    Span::styled("k", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to move up, "),
-                    Span::styled("j", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to move down, "),
-                    Span::styled("x", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to toggle, "),
-                    Span::styled("a", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to add new todo, "),
-                    Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to remove."),
-                ],
-                Style::default().add_modifier(Modifier::RAPID_BLINK),
-            ),
-            _ => (
-                vec![
-                    Span::raw("Press "),
-                    Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to stop editing, "),
-                    Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" to write the todo."),
-                ],
-                Style::default(),
-            ),
-        };
-        let mut text = Text::from(Spans::from(msg));
-        text.patch_style(style);
-        let help_message = Paragraph::new(text).wrap(Wrap { trim: true });
+            let (msg, style) = match input_mode {
+                InputMode::Normal => (
+                    vec![
+                        Span::raw("Press "),
+                        Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to exit, "),
+                        Span::styled("t", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to go to today, "),
+                        Span::styled("h", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to go yesterday, "),
+                        Span::styled("l", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to go tomorrow, "),
+                        Span::styled("k", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to move up, "),
+                        Span::styled("j", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to move down, "),
+                        Span::styled("x", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to toggle, "),
+                        Span::styled("a", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to add new todo, "),
+                        Span::styled("d", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to remove."),
+                    ],
+                    Style::default().add_modifier(Modifier::RAPID_BLINK),
+                ),
+                _ => (
+                    vec![
+                        Span::raw("Press "),
+                        Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to stop editing, "),
+                        Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(" to write the todo."),
+                    ],
+                    Style::default(),
+                ),
+            };
 
-        f.render_stateful_widget(items, chunks[0], &mut self.items.state);
-        f.render_widget(help_message, chunks[1]);
+            let mut text = Text::from(Line::from(msg));
+            text.patch_style(style);
 
-        match self.input_mode {
-            InputMode::Normal => {}
-            _ => {
-                let input = Paragraph::new(self.input.as_ref());
-                f.render_widget(input, chunks[2]);
-                f.set_cursor(chunks[2].x + self.input.len() as u16, chunks[2].y);
+            let help_message = Paragraph::new(text).wrap(Wrap { trim: true });
+
+            f.render_stateful_widget(items, chunks[0], &mut items_state);
+            f.render_widget(help_message, chunks[1]);
+
+            match input_mode {
+                InputMode::Normal => {}
+                _ => {
+                    let p = Paragraph::new(Span::raw(input_text.as_str()));
+                    f.render_widget(p, chunks[2]);
+                    f.set_cursor(chunks[2].x + input_text.len() as u16, chunks[2].y);
+                }
+            }
+        })?;
+
+        if event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                match input_mode {
+                    InputMode::Normal => match key.code {
+                        KeyCode::Char('q') => {
+                            write_items(&items, &day_path)?;
+                            break;
+                        }
+                        KeyCode::Char('t') => {
+                            write_items(&items, &day_path)?;
+
+                            day_offset = 0;
+                            day_name = date(day_offset, &config.date_format);
+                            day_path = Path::new(&config.path).join(format!("{}.md", day_name));
+                            items = read_items(&day_path, &config.habits)?;
+                            items_state = ListState::default();
+                        }
+                        KeyCode::Char('h') => {
+                            write_items(&items, &day_path)?;
+
+                            day_offset -= 1;
+                            day_name = date(day_offset, &config.date_format);
+                            day_path = Path::new(&config.path).join(format!("{}.md", day_name));
+                            items = read_items(&day_path, &config.habits)?;
+                            items_state = ListState::default();
+                        }
+                        KeyCode::Char('l') => {
+                            write_items(&items, &day_path)?;
+
+                            day_offset += 1;
+                            day_name = date(day_offset, &config.date_format);
+                            day_path = Path::new(&config.path).join(format!("{}.md", day_name));
+                            items = read_items(&day_path, &config.habits)?;
+                            items_state = ListState::default();
+                        }
+                        KeyCode::Char('j') => {
+                            if items.len() > 0 {
+                                let i = match items_state.selected() {
+                                    Some(i) => (i + 1) % items.len(),
+                                    None => 0,
+                                };
+
+                                items_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if items.len() > 0 {
+                                let i = match items_state.selected() {
+                                    Some(i) => (i + items.len() - 1) % items.len(),
+                                    None => items.len() - 1,
+                                };
+
+                                items_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Char('x') => {
+                            if let Some(i) = items_state.selected() {
+                                items[i].toggle();
+                            }
+
+                            write_items(&items, &day_path)?;
+                        }
+                        KeyCode::Char('a') => {
+                            input_mode = InputMode::Insert;
+                        }
+                        KeyCode::Char('d') => {
+                            if let Some(i) = items_state.selected() {
+                                items.remove(i);
+
+                                if items.len() == 0 {
+                                    items_state.select(None);
+                                } else {
+                                    items_state.select(Some((i + items.len() - 1) % items.len()));
+                                }
+                            }
+
+                            write_items(&items, &day_path)?;
+                        }
+                        _ => {}
+                    },
+                    InputMode::Insert => match key.code {
+                        KeyCode::Enter => {
+                            items.push(Item::new(input_text.drain(..).collect()));
+                            input_mode = InputMode::Normal;
+
+                            write_items(&items, &day_path)?;
+                        }
+                        KeyCode::Char(c) => input_text.push(c),
+                        KeyCode::Backspace => {
+                            input_text.pop();
+                        }
+                        KeyCode::Esc => {
+                            input_mode = InputMode::Normal;
+                        }
+                        _ => {}
+                    },
+                }
             }
         }
     }
-}
-
-/// Simple TUI TODO Application for daily tasks.
-#[derive(Parser, Debug)]
-#[command(version)]
-struct Args {
-    /// Name of the todo file to use
-    #[arg(short, long)]
-    name: Option<String>,
-
-    /// Import a list of todos from a file as a template
-    #[arg(short, long)]
-    import: Option<String>,
-
-    /// Creates a todo list for tomorrow
-    #[arg(short, long)]
-    tomorrow: bool,
-}
-
-fn main() -> Result<(), Error> {
-    let xdg_config_home =
-        env::var("XDG_CONFIG_HOME").unwrap_or(env::var("HOME").unwrap_or(".".to_string()));
-    let todo_path = Path::new(&xdg_config_home).join("todo-tui").join("todo");
-    fs::create_dir_all(&todo_path)?;
-
-    let args = Args::parse();
-
-    let name = match args.name {
-        Some(name) => name,
-        None => {
-            let date = chrono::Utc::now().date_naive();
-
-            let date = if args.tomorrow {
-                date.checked_add_days(Days::new(1))
-                    .expect("to be able to compute next day")
-            } else {
-                date
-            };
-
-            format!("{}", date)
-        }
-    };
-    let app_path = todo_path.join(name);
-    let mut app = App::load(&app_path)?;
-
-    if let Some(import) = args.import {
-        let import_path = todo_path.join(import);
-        let import = App::load(&import_path)?;
-        for item in import.items.into_iter() {
-            app.items.push(item);
-        }
-    }
-
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let tick_rate = Duration::from_millis(250);
-    let res = app.run(&mut terminal, tick_rate);
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    stdout().execute(LeaveAlternateScreen)?;
+    stdout().execute(DisableMouseCapture)?;
 
-    if let Err(err) = res {
-        println!("{:?}", err)
-    }
-
-    app.save(&app_path)?;
-
-    return Ok(());
+    Ok(())
 }
