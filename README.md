@@ -4,7 +4,7 @@
 
 #### Simple TUI TODO Application for daily tasks.
 
-![todo](https://imgur.com/a/ivHRUkB)
+![todo](https://i.imgur.com/58yCwly.png)
 
 </div>
 
