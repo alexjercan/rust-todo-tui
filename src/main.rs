@@ -161,7 +161,7 @@ fn status(config: config::Config) -> Result<()> {
     let completed = items.iter().filter(|i| i.completed).count();
     let total = items.len();
 
-    println!("{} / {}", completed, total);
+    println!("{}/{}", completed, total);
 
     return Ok(());
 }

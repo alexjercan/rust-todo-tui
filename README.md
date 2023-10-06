@@ -14,6 +14,16 @@
 cargo run
 ```
 
+## ⇁ Subcommands
+
+By default, the application will start in TUI mode, but you can also visualize
+statistics of your tasks using sub-commands.
+
+- `status` this sub-commands will display the number of tasks done out of the
+  total, for example `2/8`.
+- `details` this sub-command will display the list of items to stdout as
+  Markdown
+
 ## ⇁ Installation
 
 Build the cargo project:
