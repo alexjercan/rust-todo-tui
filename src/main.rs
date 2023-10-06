@@ -144,6 +144,43 @@ fn main() -> Result<()> {
 
     fs::create_dir_all(&config.path)?;
 
+    match args.subcmd {
+        Some(args::SubCommand::Status) => status(config),
+        Some(args::SubCommand::Details) => details(config),
+        None => tui(config),
+    }
+}
+
+fn status(config: config::Config) -> Result<()> {
+    let day_offset = 0;
+    let day_name = date(day_offset, &config.date_format);
+    let day_path = Path::new(&config.path).join(format!("{}.md", day_name));
+
+    let items = read_items(&day_path, &config.habits)?;
+
+    let completed = items.iter().filter(|i| i.completed).count();
+    let total = items.len();
+
+    println!("{} / {}", completed, total);
+
+    return Ok(());
+}
+
+fn details(config: config::Config) -> Result<()> {
+    let day_offset = 0;
+    let day_name = date(day_offset, &config.date_format);
+    let day_path = Path::new(&config.path).join(format!("{}.md", day_name));
+
+    let items = read_items(&day_path, &config.habits)?;
+
+    for item in items {
+        println!("{}", item.to_string());
+    }
+
+    return Ok(());
+}
+
+fn tui(config: config::Config) -> Result<()> {
     let mut input_text = String::default();
     let mut input_mode = InputMode::default();
     let mut day_offset = 0;
