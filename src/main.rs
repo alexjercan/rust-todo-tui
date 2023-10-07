@@ -121,6 +121,8 @@ where
 
     items.extend(data.lines().filter_map(|line| line.parse::<Item>().ok()));
 
+    write_items(&items, path)?;
+
     return Ok(items);
 }
 
